@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="author" content="Jan M. Kopankiewicz">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice2Diagram</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+    <style>
+        .spinner-overlay {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background-color: rgba(0, 0, 0, 0.5);
+        display: none;
+        justify-content: center;
+        align-items: center;
+        z-index: 1000;
+        }
+        .spinner-border {
+            width: 3rem;
+            height: 3rem;
+        }
+    </style>
+</head>
+<body>
+    <div id="spinner" class="spinner-overlay">
+        <div class="spinner-border text-light" role="status">
+            <span class="visually-hidden">Loading...</span>
+        </div>
+    </div>
+
+    <div class="container mt-5">
+        <h1>Voice2Diagram</h1>
+        <p>From a voice recording to a diagram</p>
+    </div>
+    <div class="container mt-5">
+        <div class="mb-3">
+            <button id="recordButton" class="btn btn-primary">Record Audio</button>
+            <audio id="audioPlayback" controls style="display:none;"></audio>
+        </div>
+        <form id="audioForm">
+            <div class="mb-3">
+                <label for="audioUpload" class="form-label">Or Upload Audio File:</label>
+                <input type="file" class="form-control" id="audioUpload" accept="audio/*">
+            </div>
+            <button type="submit" class="btn btn-primary" id="submitAudio">Process Audio</button>
+        </form>
+        <div class="mt-4">
+            <label for="transcription" class="form-label">Transcription</label>
+            <textarea class="form-control" id="transcription" rows="4" placeholder="Transcribed recording will appear here..."></textarea>
+            <button type="button" class="btn btn-primary mt-2" id="createDiagram">Generate Diagram</button>
+        </div>
+        <div class="mt-4">
+            <label for="mermaidCode" class="form-label">Mermaid Code</label>
+            <textarea class="form-control" id="mermaidCode" rows="4" placeholder="Mermaid code will appear here..."></textarea>
+        </div>
+        <div class="mt-4"><label for="outputViz" class="form-label">Visualization</label></div>
+        <div class="mermaid" id="mermaidContainer"></div>
+    </div>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.2.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script src="https://code.jquery.com/jquery-3.6.0.min.js"></script>
+    <!-- Custom Script -->
+    <script>
+        let mediaRecorder;
+        let audioChunks = [];
+
+        mermaid.initialize({ startOnLoad: true });
+
+        document.getElementById('recordButton').addEventListener('click', toggleRecording);
+        document.getElementById('createDiagram').addEventListener('click', createDiagram)
+        document.getElementById('mermaidCode').addEventListener('input', renderMermaidDiagram);
+
+        function showSpinner() {
+            console.log('Showing spinner');
+            document.getElementById('spinner').style.display = 'flex';
+            }
+
+        function hideSpinner() {
+            console.log('Hiding spinner');
+            document.getElementById('spinner').style.display = 'none';
+            }
+
+        function toggleRecording() {
+            if (mediaRecorder && mediaRecorder.state === "recording") {
+                mediaRecorder.stop();
+                document.getElementById('recordButton').textContent = 'Record Audio';
+            } else {
+                navigator.mediaDevices.getUserMedia({ audio: true })
+                    .then(stream => {
+                        mediaRecorder = new MediaRecorder(stream);
+                        mediaRecorder.start();
+                        document.getElementById('recordButton').textContent = 'Stop Recording';
+
+                        mediaRecorder.addEventListener("dataavailable", event => {
+                            audioChunks.push(event.data);
+                        });
+
+                        mediaRecorder.addEventListener("stop", () => {
+                            const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                            const audioUrl = URL.createObjectURL(audioBlob);
+                            document.getElementById('audioPlayback').src = audioUrl;
+                            document.getElementById('audioPlayback').style.display = 'block';
+                            processAudio(audioBlob);
+                            audioChunks = [];
+                        });
+                    });
+            }
+        }
+
+        function processAudio(audioBlob) {
+            showSpinner();
+            let formData = new FormData();
+            formData.append('audioFile', audioBlob, 'recorded_audio.wav');
+
+            $.ajax({
+                url: '/process_audio',
+                type: 'POST',
+                data: formData,
+                contentType: false,
+                processData: false,
+                success: function(response) {
+                    $('#transcription').val(response.transcription);
+                    hideSpinner();
+                },
+                error: function(err) {
+                    console.error('Error:', err);
+                    hideSpinner();
+                }
+            });
+        }
+
+        function createDiagram() {
+            console.log('Creating diagram');
+            showSpinner();
+            var inputText = $('#transcription').val();
+
+            $.ajax({
+                url: '/generate_diagram',
+                type: 'POST',
+                data: { text: inputText },
+                success: function(response) {
+                    console.log('Diagram generated successfully');
+                    $('#mermaidCode').val(response.mermaid_code);
+                    renderMermaidDiagram();
+                    hideSpinner();
+                },
+                error: function(xhr, status, error) {
+                    console.error('Error generating diagram:', error);
+                    alert('Error generating diagram: ' + error);
+                    hideSpinner();
+                }
+            });
+        }
+
+        function renderMermaidDiagram() {
+            var mermaidCode = $('#mermaidCode').val();
+            var container = document.getElementById('mermaidContainer');
+            
+            // Clear the container
+            container.innerHTML = '';
+            
+            // Create a new div for Mermaid
+            var mermaidDiv = document.createElement('div');
+            mermaidDiv.className = 'mermaid';
+            mermaidDiv.textContent = mermaidCode;
+            
+            // Add the div to the container
+            container.appendChild(mermaidDiv);
+            
+            // Render the diagram
+            mermaid.run();
+        }
+
+        $(document).ready(function() {
+            $('#audioForm').submit(function(event) {
+                event.preventDefault();
+                showSpinner();
+                let formData = new FormData();
+                formData.append('audioFile', $('#audioUpload')[0].files[0]);
+
+                $.ajax({
+                    url: '/process_audio',
+                    type: 'POST',
+                    data: formData,
+                    contentType: false,
+                    processData: false,
+                    success: function(response) {
+                        $('#transcription').val(response.transcription);
+                        hideSpinner();
+                    },
+                    error: function(err) {
+                        console.error('Error:', err);
+                        hideSpinner();
+                    }
+                });
+            });
+        });
+    </script>
+</body>
+</html>
